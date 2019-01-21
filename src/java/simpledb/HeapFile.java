@@ -62,9 +62,22 @@ public class HeapFile implements DbFile {
     }
 
     // see DbFile.java for javadocs
-    public Page readPage(PageId pid) {
-        // some code goes here
-        return null;
+    public Page readPage(PageId pid) throws IllegalArgumentException {
+        try {
+            RandomAccessFile fileReader = fileReader = new RandomAccessFile(f, "r");
+            byte[] buf = new byte[BufferPool.getPageSize()];
+            
+            fileReader.seek(BufferPool.getPageSize() * pid.getPageNumber());
+            fileReader.read(buf);
+            fileReader.close();
+            
+            return new HeapPage((HeapPageId) pid, buf);
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+            
+            throw new IllegalArgumentException();
+        }
     }
 
     // see DbFile.java for javadocs
@@ -77,8 +90,7 @@ public class HeapFile implements DbFile {
      * Returns the number of pages in this HeapFile.
      */
     public int numPages() {
-        // some code goes here
-        return 0;
+        return (int) Math.floor(f.length() / BufferPool.getPageSize());
     }
 
     // see DbFile.java for javadocs
@@ -99,9 +111,86 @@ public class HeapFile implements DbFile {
 
     // see DbFile.java for javadocs
     public DbFileIterator iterator(TransactionId tid) {
-        // some code goes here
-        return null;
+        return new HeapFileIterator(this, tid);
     }
-
+    
+    // inner class to support HeapFile.iterator()
+    // inherits by DbFileIterator
+    public class HeapFileIterator implements DbFileIterator {
+        // fields
+        private HeapFile hf;
+        private TransactionId tid;
+        private int pageNum;
+        private Iterator<Tuple> tuples;
+        
+        // constructor
+        public HeapFileIterator(HeapFile hf, TransactionId tid) {
+            this.hf = hf;
+            this.tid = tid;
+        }
+        
+        /**
+         * Opens the iterator
+         * @throws DbException when there are problems opening/accessing the database.
+         */
+        public void open() throws DbException, TransactionAbortedException {
+            pageNum = 0;
+            tuples = openHelper(pageNum).iterator();
+        }
+        
+        public HeapPage openHelper(int pageNumber) throws DbException, TransactionAbortedException {
+            return (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(hf.getId(), pageNumber), Permissions.READ_ONLY);
+        }
+        
+        /** @return true if there are more tuples available, false if no more tuples or iterator isn't open. */
+        public boolean hasNext() throws DbException, TransactionAbortedException {
+            // there is no next item
+            if (tuples == null || pageNum > hf.numPages()) {
+                return false;
+            }
+            
+            // looking for tuples available from page to page
+            while (!tuples.hasNext()) {
+                pageNum += 1;
+                
+                if (pageNum >= hf.numPages()) { return false; }
+                
+                tuples = openHelper(pageNum).iterator();
+            }
+            // loop terminated, found tuples
+            return true;
+        }
+        
+        /**
+         * Gets the next tuple from the operator (typically implementing by reading
+         * from a child operator or an access method).
+         *
+         * @return The next tuple in the iterator.
+         * @throws NoSuchElementException if there are no more tuples
+         */
+        public Tuple next() throws NoSuchElementException, DbException, TransactionAbortedException, NoSuchElementException {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            
+            return tuples.next();
+        }
+        
+        /**
+         * Resets the iterator to the start.
+         * @throws DbException When rewind is unsupported.
+         */
+        public void rewind() throws DbException, TransactionAbortedException {
+            open();
+        }
+        
+        /**
+         * Closes the iterator.
+         */
+        public void close() {
+            pageNum = 0;
+            tuples = null;
+        }
+    }
 }
 
