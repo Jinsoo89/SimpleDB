@@ -79,6 +79,7 @@ public class BufferPool {
         }
         
         p = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+        bufPool.put(pid, p);
         
         return p;
     }
