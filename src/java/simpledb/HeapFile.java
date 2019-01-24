@@ -64,7 +64,7 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public Page readPage(PageId pid) throws IllegalArgumentException {
         try {
-            RandomAccessFile fileReader = fileReader = new RandomAccessFile(f, "r");
+            RandomAccessFile fileReader = new RandomAccessFile(f, "r");
             byte[] buf = new byte[BufferPool.getPageSize()];
             
             fileReader.seek(BufferPool.getPageSize() * pid.getPageNumber());
