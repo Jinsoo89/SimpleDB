@@ -1,12 +1,21 @@
 package simpledb;
 
+import simpledb.Aggregator.Op;
+import java.util.*;
+
 /**
  * Knows how to compute some aggregate over a set of StringFields.
  */
 public class StringAggregator implements Aggregator {
 
     private static final long serialVersionUID = 1L;
-
+    // fields
+    private int gbfield;
+    private int afield;
+    private Type gbfieldtype;
+    private Op what;
+    private HashMap<Field, Integer> counts;
+    
     /**
      * Aggregate constructor
      * @param gbfield the 0-based index of the group-by field in the tuple, or NO_GROUPING if there is no grouping
@@ -17,7 +26,14 @@ public class StringAggregator implements Aggregator {
      */
 
     public StringAggregator(int gbfield, Type gbfieldtype, int afield, Op what) {
-        // some code goes here
+        if (what != Op.COUNT) {
+            throw new IllegalArgumentException();
+        }
+        this.gbfield = gbfield;
+        this.gbfieldtype = gbfieldtype;
+        this.afield = afield;
+        this.what = what;
+        counts = new HashMap<>();
     }
 
     /**
@@ -25,7 +41,18 @@ public class StringAggregator implements Aggregator {
      * @param tup the Tuple containing an aggregate field and a group-by field
      */
     public void mergeTupleIntoGroup(Tuple tup) {
-        // some code goes here
+//        if (gbfield != NO_GROUPING) {
+//            String gfname = tup.getTupleDesc().getFieldName(gbfield);
+            Field gf = tup.getField(gbfield);
+            Integer c = counts.get(gf);
+            counts.put(gf, c == null ? 1 : c + 1);
+            
+//            if (!counts.containsKey(gf)) {
+//                counts.put(gf, 1);
+//            } else {
+//                int c = counts.get(gf);
+//                counts.put(gf, c + 1);
+//            }
     }
 
     /**
@@ -37,8 +64,30 @@ public class StringAggregator implements Aggregator {
      *   aggregate specified in the constructor.
      */
     public OpIterator iterator() {
-        // some code goes here
-        throw new UnsupportedOperationException("please implement me for lab2");
+        ArrayList<Tuple> tuples = new ArrayList<>();
+        TupleDesc td;
+        
+        if (gbfield != NO_GROUPING) {
+            td = new TupleDesc(new Type[] { gbfieldtype, Type.INT_TYPE });
+            
+            for (Field f : counts.keySet()) {
+                Tuple tuple = new Tuple(td);
+                
+                tuple.setField(0, f);
+                tuple.setField(1, new IntField(counts.get(f)));
+                
+                tuples.add(tuple);
+            }
+        } else {
+            td = new TupleDesc(new Type[] { Type.INT_TYPE });
+            
+            Tuple tuple = new Tuple(td);
+            
+            tuple.setField(0, new IntField(counts.get(null)));
+            
+            tuples.add(tuple);
+        }
+        return new TupleIterator(td, tuples);
     }
 
 }
