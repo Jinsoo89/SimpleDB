@@ -2,6 +2,7 @@ package simpledb;
 
 import java.io.*;
 import java.util.*;
+import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -71,11 +72,12 @@ public class BufferPool {
      */
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        
         Page p = bufPool.get(pid);
         
         if (p != null) {
             return p;
+        } else if (p == null && bufPool.size() == numPages) {
+            evictPage();
         }
         
         p = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
@@ -145,8 +147,12 @@ public class BufferPool {
      */
     public void insertTuple(TransactionId tid, int tableId, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
-        // some code goes here
-        // not necessary for lab1
+        ArrayList<Page> pages = Database.getCatalog().getDatabaseFile(tableId).insertTuple(tid, t);
+        
+        for (Page p : pages) {
+            p.markDirty(true, tid);
+            bufPool.put(p.getId(), p);
+        }
     }
 
     /**
@@ -164,8 +170,13 @@ public class BufferPool {
      */
     public  void deleteTuple(TransactionId tid, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
-        // some code goes here
-        // not necessary for lab1
+        ArrayList<Page> pages = Database.getCatalog().getDatabaseFile(
+                t.getRecordId().getPageId().getTableId()).deleteTuple(tid, t);
+        
+        for (Page p : pages) {
+            p.markDirty(true, tid);
+            bufPool.put(p.getId(), p);
+        }
     }
 
     /**
@@ -174,9 +185,9 @@ public class BufferPool {
      *     break simpledb if running in NO STEAL mode.
      */
     public synchronized void flushAllPages() throws IOException {
-        // some code goes here
-        // not necessary for lab1
-
+        for (PageId pid : bufPool.keySet()) {
+            flushPage(pid);
+        }
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -188,22 +199,27 @@ public class BufferPool {
         are removed from the cache so they can be reused safely
     */
     public synchronized void discardPage(PageId pid) {
-        // some code goes here
-        // not necessary for lab1
+        bufPool.remove(pid);
     }
 
     /**
      * Flushes a certain page to disk
      * @param pid an ID indicating the page to flush
      */
-    private synchronized  void flushPage(PageId pid) throws IOException {
-        // some code goes here
-        // not necessary for lab1
+    private synchronized void flushPage(PageId pid) throws IOException {
+        Page p = bufPool.get(pid);
+        
+        if (p == null) {
+            return;
+        } else {
+            Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(p);
+            p.markDirty(false, null);
+        }
     }
 
     /** Write all pages of the specified transaction to disk.
      */
-    public synchronized  void flushPages(TransactionId tid) throws IOException {
+    public synchronized void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
     }
@@ -212,9 +228,20 @@ public class BufferPool {
      * Discards a page from the buffer pool.
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
-    private synchronized  void evictPage() throws DbException {
-        // some code goes here
-        // not necessary for lab1
+    private synchronized void evictPage() throws DbException {
+         if (!bufPool.isEmpty()) {
+             while (bufPool.size() >= numPages) {
+                 HeapPageId pid = (HeapPageId) bufPool.entrySet().iterator().next().getKey();
+               
+                 try {
+                     flushPage(pid);
+                 } catch (IOException e) {
+                     // TODO Auto-generated catch block
+                     e.printStackTrace();
+                 }
+                 bufPool.remove(pid);
+             }
+         }
     }
 
 }
