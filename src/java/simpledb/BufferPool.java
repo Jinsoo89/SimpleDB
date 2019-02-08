@@ -30,6 +30,8 @@ public class BufferPool {
     // fields
     private int numPages;
     private Map<PageId, Page> bufPool;
+    // pid list to perform FIFO evict page policy
+    private ArrayList<PageId> pidList;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -39,6 +41,7 @@ public class BufferPool {
     public BufferPool(int numPages) {
         this.numPages = numPages;
         this.bufPool = new HashMap<>();
+        pidList = new ArrayList<>();
     }
     
     public static int getPageSize() {
@@ -77,11 +80,14 @@ public class BufferPool {
         if (p != null) {
             return p;
         } else if (p == null && bufPool.size() == numPages) {
+            // if the pool is full, call evictPage() to make
+            // a place to add getting page to the pool
             evictPage();
         }
         
         p = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
         bufPool.put(pid, p);
+        pidList.add(pid);
         
         return p;
     }
@@ -152,6 +158,7 @@ public class BufferPool {
         for (Page p : pages) {
             p.markDirty(true, tid);
             bufPool.put(p.getId(), p);
+            pidList.add(p.getId());
         }
     }
 
@@ -176,6 +183,7 @@ public class BufferPool {
         for (Page p : pages) {
             p.markDirty(true, tid);
             bufPool.put(p.getId(), p);
+            pidList.add(p.getId());
         }
     }
 
@@ -200,6 +208,7 @@ public class BufferPool {
     */
     public synchronized void discardPage(PageId pid) {
         bufPool.remove(pid);
+        pidList.remove(pid);
     }
 
     /**
@@ -230,16 +239,17 @@ public class BufferPool {
      */
     private synchronized void evictPage() throws DbException {
          if (!bufPool.isEmpty()) {
-             while (bufPool.size() >= numPages) {
-                 HeapPageId pid = (HeapPageId) bufPool.entrySet().iterator().next().getKey();
-               
+             while (bufPool.size() >= numPages && pidList.size() >= numPages) {
+                 HeapPageId pid = (HeapPageId) pidList.get(0);
                  try {
                      flushPage(pid);
                  } catch (IOException e) {
                      // TODO Auto-generated catch block
                      e.printStackTrace();
                  }
+                 // remove page from the pool and list of pids
                  bufPool.remove(pid);
+                 pidList.remove(pid);
              }
          }
     }
