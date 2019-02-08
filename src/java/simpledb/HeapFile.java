@@ -69,23 +69,13 @@ public class HeapFile implements DbFile {
                 writePage(page);
                 return page;
             } else {
-                RandomAccessFile randomAccessFile = new RandomAccessFile(f, "r");
-                randomAccessFile.seek(BufferPool.getPageSize() * pid.getPageNumber());
+                RandomAccessFile raf = new RandomAccessFile(f, "r");
+                raf.seek(BufferPool.getPageSize() * pid.getPageNumber());
                 byte[] data = new byte[BufferPool.getPageSize()];
-                randomAccessFile.read(data);
+                raf.read(data);
+                
                 return new HeapPage((HeapPageId) pid, data);
             }
-//            int pageSize = BufferPool.getPageSize();
-//            RandomAccessFile fileReader = new RandomAccessFile(f, "r");
-//            byte[] buf = new byte[pageSize];
-//            
-//            if (pid.getPageNumber() * pageSize < fileReader.length()) {
-//                fileReader.seek(pageSize * pid.getPageNumber());
-//                fileReader.read(buf);
-//                fileReader.close();
-//            }
-//            
-//            return new HeapPage(new HeapPageId(pid.getTableId(), pid.getPageNumber()), buf);
         } catch (IOException e) {
             // TODO Auto-generated catch block
             e.printStackTrace();
@@ -113,11 +103,11 @@ public class HeapFile implements DbFile {
     public ArrayList<Page> insertTuple(TransactionId tid, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
         ArrayList<Page> list = new ArrayList<>();
-        
+        // iterate through pages
         for (int i = 0; i < numPages(); i++) {
             PageId pid = new HeapPageId(getId(), i);
             HeapPage hpage = (HeapPage) Database.getBufferPool().getPage(tid, pid, Permissions.READ_ONLY);
-            
+            // if the current page has empty slot, insert tuple there
             if (hpage.getNumEmptySlots() > 0) {
                 hpage = (HeapPage) Database.getBufferPool().getPage(tid, pid, Permissions.READ_WRITE);
                 hpage.insertTuple(t);
