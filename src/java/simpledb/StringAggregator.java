@@ -41,18 +41,9 @@ public class StringAggregator implements Aggregator {
      * @param tup the Tuple containing an aggregate field and a group-by field
      */
     public void mergeTupleIntoGroup(Tuple tup) {
-//        if (gbfield != NO_GROUPING) {
-//            String gfname = tup.getTupleDesc().getFieldName(gbfield);
             Field gf = tup.getField(gbfield);
             Integer c = counts.get(gf);
             counts.put(gf, c == null ? 1 : c + 1);
-            
-//            if (!counts.containsKey(gf)) {
-//                counts.put(gf, 1);
-//            } else {
-//                int c = counts.get(gf);
-//                counts.put(gf, c + 1);
-//            }
     }
 
     /**
