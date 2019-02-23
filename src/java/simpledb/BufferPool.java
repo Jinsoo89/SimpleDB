@@ -30,8 +30,7 @@ public class BufferPool {
     // fields
     private int numPages;
     private Map<PageId, Page> bufPool;
-    // pid list to perform FIFO evict page policy
-    private ArrayList<PageId> pidList;
+    private LockManager lockManager;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -40,22 +39,22 @@ public class BufferPool {
      */
     public BufferPool(int numPages) {
         this.numPages = numPages;
-        this.bufPool = new HashMap<>();
-        pidList = new ArrayList<>();
+        this.bufPool = new ConcurrentHashMap<>();
+        this.lockManager = new LockManager();
     }
     
     public static int getPageSize() {
-      return pageSize;
+        return pageSize;
     }
     
     // THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!
     public static void setPageSize(int pageSize) {
-    	BufferPool.pageSize = pageSize;
+    	    BufferPool.pageSize = pageSize;
     }
     
     // THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!
     public static void resetPageSize() {
-    	BufferPool.pageSize = DEFAULT_PAGE_SIZE;
+    	    BufferPool.pageSize = DEFAULT_PAGE_SIZE;
     }
 
     /**
@@ -75,19 +74,30 @@ public class BufferPool {
      */
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        Page p = bufPool.get(pid);
+        Page p;
+        
+        if (perm == Permissions.READ_ONLY) {
+            // read only permissoin - acquire shared lock
+            lockManager.acquireShared(tid, pid);
+        } else {
+            // read-write permission - acquire exclusive lock
+            lockManager.acquireExclusive(tid, pid);
+        }
+        
+        p = bufPool.get(pid);
         
         if (p != null) {
-            return p;
-        } else if (p == null && bufPool.size() == numPages) {
-            // if the pool is full, call evictPage() to make
-            // a place to add getting page to the pool
-            evictPage();
+           return p;
         }
         
         p = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+        
+        // buffer pool is full, evict a page
+        while (bufPool.size() >= numPages) {
+            evictPage();
+        }
+        // add page to buffer pool
         bufPool.put(pid, p);
-        pidList.add(pid);
         
         return p;
     }
@@ -101,9 +111,8 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      * @param pid the ID of the page to unlock
      */
-    public  void releasePage(TransactionId tid, PageId pid) {
-        // some code goes here
-        // not necessary for lab1|lab2
+    public void releasePage(TransactionId tid, PageId pid) {
+        lockManager.release(tid, pid);
     }
 
     /**
@@ -112,15 +121,12 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      */
     public void transactionComplete(TransactionId tid) throws IOException {
-        // some code goes here
-        // not necessary for lab1|lab2
+        transactionComplete(tid, true);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
-    public boolean holdsLock(TransactionId tid, PageId p) {
-        // some code goes here
-        // not necessary for lab1|lab2
-        return false;
+    public boolean holdsLock(TransactionId tid, PageId pid) {
+        return lockManager.holdsLock(tid, pid);
     }
 
     /**
@@ -132,8 +138,27 @@ public class BufferPool {
      */
     public void transactionComplete(TransactionId tid, boolean commit)
         throws IOException {
-        // some code goes here
-        // not necessary for lab1|lab2
+        Iterator<Entry<PageId, Page>> pages = bufPool.entrySet().iterator();
+        
+        while (pages.hasNext()) {
+            Entry<PageId, Page> pageEntry = pages.next();
+            Page page = pageEntry.getValue();
+            PageId pid = pageEntry.getKey();
+            
+            if (tid.equals(page.isDirty())) {
+                if (!commit) {
+                    // abort, revert chages made by the transaction
+                    // by restoring the page to its on-disk state
+                    bufPool.put(pid, page.getBeforeImage());
+                } else {
+                    // commit, flush dirty pages associated with
+                    // the transaction to disk
+                    flushPages(tid);
+                }
+            }
+        }
+        // release all locks that the transaction held
+        lockManager.releaseAll(tid);
     }
 
     /**
@@ -158,7 +183,6 @@ public class BufferPool {
         for (Page p : pages) {
             p.markDirty(true, tid);
             bufPool.put(p.getId(), p);
-            pidList.add(p.getId());
         }
     }
 
@@ -183,7 +207,6 @@ public class BufferPool {
         for (Page p : pages) {
             p.markDirty(true, tid);
             bufPool.put(p.getId(), p);
-            pidList.add(p.getId());
         }
     }
 
@@ -193,8 +216,9 @@ public class BufferPool {
      *     break simpledb if running in NO STEAL mode.
      */
     public synchronized void flushAllPages() throws IOException {
-        for (PageId pid : bufPool.keySet()) {
-            flushPage(pid);
+        for (Page p : bufPool.values()) {
+            Database.getCatalog().getDatabaseFile(p.getId().getTableId()).writePage(p);
+            p.markDirty(false, null);
         }
     }
 
@@ -208,7 +232,6 @@ public class BufferPool {
     */
     public synchronized void discardPage(PageId pid) {
         bufPool.remove(pid);
-        pidList.remove(pid);
     }
 
     /**
@@ -219,18 +242,27 @@ public class BufferPool {
         Page p = bufPool.get(pid);
         
         if (p == null) {
-            return;
-        } else {
-            Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(p);
-            p.markDirty(false, null);
+            throw new IOException();
         }
+        
+        Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(p);
+        p.markDirty(false, null);
     }
 
     /** Write all pages of the specified transaction to disk.
      */
     public synchronized void flushPages(TransactionId tid) throws IOException {
-        // some code goes here
-        // not necessary for lab1|lab2
+        Iterator<Entry<PageId, Page>> pages = bufPool.entrySet().iterator();
+        
+        while (pages.hasNext()) {
+            Entry<PageId, Page> pageEntry = pages.next();
+            Page page = pageEntry.getValue();
+            PageId pid = pageEntry.getKey();
+            
+            if (tid.equals(page.isDirty())) {
+                flushPage(pid);
+            }
+        }
     }
 
     /**
@@ -239,19 +271,25 @@ public class BufferPool {
      */
     private synchronized void evictPage() throws DbException {
          if (!bufPool.isEmpty()) {
-             while (bufPool.size() >= numPages && pidList.size() >= numPages) {
-                 HeapPageId pid = (HeapPageId) pidList.get(0);
-                 try {
-                     flushPage(pid);
-                 } catch (IOException e) {
-                     // TODO Auto-generated catch block
-                     e.printStackTrace();
+             Iterator<Entry<PageId, Page>> pages = bufPool.entrySet().iterator();
+             
+             while (bufPool.size() >= numPages && pages.hasNext()) {
+                 Entry<PageId, Page> pageEntry = pages.next();
+                 Page page = pageEntry.getValue();
+                 PageId pid = pageEntry.getKey();
+                 
+                 // check if the page is dirty, if the page is dirty,
+                 // nothing happens
+                 if (page.isDirty() != null) {
+                     continue;
                  }
-                 // remove page from the pool and list of pids
+                 // NO STEAL - the page is not dirty, it is okay to evict
                  bufPool.remove(pid);
-                 pidList.remove(pid);
+             }
+             // all pages are dirty, throw a DbException
+             if (bufPool.size() >= numPages) {
+                 throw new DbException("all pages are dirty");
              }
          }
     }
-
 }
