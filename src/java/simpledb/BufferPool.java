@@ -147,12 +147,13 @@ public class BufferPool {
             
             if (tid.equals(page.isDirty())) {
                 if (!commit) {
-                    // abort, revert chages made by the transaction
+                    // abort, revert changes made by the transaction
                     // by restoring the page to its on-disk state
                     bufPool.put(pid, page.getBeforeImage());
                 } else {
                     // commit, flush dirty pages associated with
                     // the transaction to disk
+                    // FORCE
                     flushPages(tid);
                 }
             }
@@ -199,7 +200,7 @@ public class BufferPool {
      * @param tid the transaction deleting the tuple.
      * @param t the tuple to delete
      */
-    public  void deleteTuple(TransactionId tid, Tuple t)
+    public void deleteTuple(TransactionId tid, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
         ArrayList<Page> pages = Database.getCatalog().getDatabaseFile(
                 t.getRecordId().getPageId().getTableId()).deleteTuple(tid, t);
