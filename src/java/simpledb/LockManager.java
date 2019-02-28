@@ -16,6 +16,7 @@ class LockManager {
         dependencyGraph = new HashMap<TransactionId, ArrayList<TransactionId>>();
     }
     
+    // acquire shared lock
     public void acquireShared(TransactionId tid, PageId pid) throws TransactionAbortedException {
         locker.lock();
         
@@ -39,6 +40,7 @@ class LockManager {
         locker.unlock();
     }
 
+    // acquire exclusive lock
     public void acquireExclusive(TransactionId tid, PageId pid) throws TransactionAbortedException {
         locker.lock();
 
@@ -77,7 +79,8 @@ class LockManager {
             locker.unlock();
         }
     }
-
+    
+    // release a lock
     public void release(TransactionId tid, PageId pid) {
         locker.lock();
 
@@ -92,6 +95,7 @@ class LockManager {
         }
     }
 
+    // release all locks associated with the transaction (tid)
     public void releaseAll(TransactionId tid) {
         locker.lock();
 
@@ -133,6 +137,7 @@ class LockManager {
         return false;
     }
 
+    // detects deadlock by finding a cycle in the dependency graph
     private boolean detectDeadLock(SimpleLock slock, TransactionId wait) {
         for (TransactionId own : slock.getOwners()) {
             // there is a cycle in the dependency graph
