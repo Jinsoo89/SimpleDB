@@ -466,7 +466,46 @@ public class LogFile {
         synchronized (Database.getBufferPool()) {
             synchronized(this) {
                 preAppend();
-                // some code goes here
+                
+                if (!tidToFirstLogRecord.containsKey(tid.getId())) {
+                    return;
+                }
+                
+                // set to store pages that already reverted
+                HashSet<Page> revertedPages = new HashSet<>();
+                
+                raf.seek(tidToFirstLogRecord.get(tid.getId()));
+                
+                while (raf.getFilePointer() < raf.length()) {
+                    // type of record and its tid
+                    int recordType = raf.readInt();
+                    long recordTid = raf.readLong();
+                    
+                    if (recordType == UPDATE_RECORD) {
+                        // get the before-image of page
+                        Page beforePage = readPageData(raf);
+                        
+                        if (!revertedPages.contains(beforePage) &&
+                                recordTid == tid.getId()) {
+                            // write the before-image page
+                            Database.getCatalog().getDatabaseFile(
+                                    beforePage.getId().getTableId()).writePage(beforePage);
+                            // remove the page from the BufferPool
+                            Database.getBufferPool().discardPage(beforePage.getId());
+                            
+                            revertedPages.add(beforePage);
+                        }
+                        // read after-image page to move pointer
+                        readPageData(raf);
+                    } else if (recordType == CHECKPOINT_RECORD) {
+                        int transactions = raf.readInt();
+                        long jump = 2 * transactions * LONG_SIZE;
+                        
+                        raf.seek(raf.getFilePointer() + jump);
+                    }
+                    // read the past record
+                    raf.readLong();
+                }
             }
         }
     }
