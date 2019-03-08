@@ -146,15 +146,16 @@ public class BufferPool {
             PageId pid = pageEntry.getKey();
             
             if (tid.equals(page.isDirty())) {
-                if (!commit) {
+                if (commit) {
+                    Database.getLogFile().logWrite(tid, page.getBeforeImage(), page);
+                    Database.getLogFile().force();
+                    // use current page contents as the before-image
+                    // for the next transaction that modifies this page.
+                    page.setBeforeImage();
+                } else {
                     // abort, revert changes made by the transaction
                     // by restoring the page to its on-disk state
                     bufPool.put(pid, page.getBeforeImage());
-                } else {
-                    // commit, flush dirty pages associated with
-                    // the transaction to disk
-                    // FORCE
-                    flushPages(tid);
                 }
             }
         }
@@ -218,8 +219,9 @@ public class BufferPool {
      */
     public synchronized void flushAllPages() throws IOException {
         for (Page p : bufPool.values()) {
-            Database.getCatalog().getDatabaseFile(p.getId().getTableId()).writePage(p);
-            p.markDirty(false, null);
+//            Database.getCatalog().getDatabaseFile(p.getId().getTableId()).writePage(p);
+//            p.markDirty(false, null);
+            flushPage(p.getId());
         }
     }
 
@@ -244,6 +246,14 @@ public class BufferPool {
         
         if (p == null) {
             throw new IOException();
+        }
+        
+        // append an update record to the log, with
+        // a before-image and after-image.
+        TransactionId dirtier = p.isDirty();
+        if (dirtier != null){
+          Database.getLogFile().logWrite(dirtier, p.getBeforeImage(), p);
+          Database.getLogFile().force();
         }
         
         Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(p);
@@ -276,15 +286,18 @@ public class BufferPool {
              
              while (bufPool.size() >= numPages && pages.hasNext()) {
                  Entry<PageId, Page> pageEntry = pages.next();
-                 Page page = pageEntry.getValue();
+//                 Page page = pageEntry.getValue();
                  PageId pid = pageEntry.getKey();
                  
-                 // check if the page is dirty, if the page is dirty,
-                 // nothing happens
-                 if (page.isDirty() != null) {
-                     continue;
+                 // STEAL - can flush any
+                 try {
+                    flushPage(pid);
+                    
+                 } catch (IOException e) {
+                     // TODO Auto-generated catch block
+                     e.printStackTrace();
                  }
-                 // NO STEAL - the page is not dirty, it is okay to evict
+                 
                  bufPool.remove(pid);
              }
              // all pages are dirty, throw a DbException
