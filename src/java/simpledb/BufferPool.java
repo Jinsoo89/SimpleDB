@@ -77,7 +77,7 @@ public class BufferPool {
         Page p;
         
         if (perm == Permissions.READ_ONLY) {
-            // read only permissoin - acquire shared lock
+            // read only permission - acquire shared lock
             lockManager.acquireShared(tid, pid);
         } else {
             // read-write permission - acquire exclusive lock
@@ -219,8 +219,6 @@ public class BufferPool {
      */
     public synchronized void flushAllPages() throws IOException {
         for (Page p : bufPool.values()) {
-//            Database.getCatalog().getDatabaseFile(p.getId().getTableId()).writePage(p);
-//            p.markDirty(false, null);
             flushPage(p.getId());
         }
     }
@@ -251,13 +249,14 @@ public class BufferPool {
         // append an update record to the log, with
         // a before-image and after-image.
         TransactionId dirtier = p.isDirty();
+        
         if (dirtier != null){
           Database.getLogFile().logWrite(dirtier, p.getBeforeImage(), p);
           Database.getLogFile().force();
         }
         
         Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(p);
-        p.markDirty(false, null);
+//        p.markDirty(false, null);
     }
 
     /** Write all pages of the specified transaction to disk.
@@ -282,23 +281,20 @@ public class BufferPool {
      */
     private synchronized void evictPage() throws DbException {
          if (!bufPool.isEmpty()) {
-             Iterator<Entry<PageId, Page>> pages = bufPool.entrySet().iterator();
+             Iterator<PageId> pids = bufPool.keySet().iterator();
              
-             while (bufPool.size() >= numPages && pages.hasNext()) {
-                 Entry<PageId, Page> pageEntry = pages.next();
-//                 Page page = pageEntry.getValue();
-                 PageId pid = pageEntry.getKey();
+             while (bufPool.size() >= numPages && pids.hasNext()) {
+                 PageId pid = pids.next();
                  
                  // STEAL - can flush any
                  try {
                     flushPage(pid);
+                    bufPool.remove(pid);
                     
                  } catch (IOException e) {
                      // TODO Auto-generated catch block
                      e.printStackTrace();
                  }
-                 
-                 bufPool.remove(pid);
              }
              // all pages are dirty, throw a DbException
              if (bufPool.size() >= numPages) {
