@@ -415,6 +415,7 @@ public class LogFile {
 
                     writePageData(logNew, before);
                     writePageData(logNew, after);
+                    
                     break;
                 case CHECKPOINT_RECORD:
                     int numXactions = raf.readInt();
@@ -425,9 +426,11 @@ public class LogFile {
                         logNew.writeLong(xid);
                         logNew.writeLong((xoffset - minLogRecord) + LONG_SIZE);
                     }
+                    
                     break;
                 case BEGIN_RECORD:
                     tidToFirstLogRecord.put(record_tid,newStart);
+                    
                     break;
                 }
 
@@ -471,39 +474,46 @@ public class LogFile {
                     return;
                 }
                 
-                // set to store pages that already reverted
-                HashSet<Page> revertedPages = new HashSet<>();
+                long firstRecord = tidToFirstLogRecord.get(tid.getId());
                 
-                raf.seek(tidToFirstLogRecord.get(tid.getId()));
+                rollbackHelper(tid.getId(), firstRecord);
+                
+            }
+        }
+    }
+    
+    // helper function of rollback (version of having additional param)
+    private void rollbackHelper(long tid, long offset) throws IOException {
+        synchronized (Database.getBufferPool()) {
+            synchronized (this) {
+                raf.seek(offset);
                 
                 while (raf.getFilePointer() < raf.length()) {
-                    // type of record and its tid
                     int recordType = raf.readInt();
-                    long recordTid = raf.readLong();
+                    long recordId = raf.readLong();
                     
-                    if (recordType == UPDATE_RECORD) {
-                        // get the before-image of page
-                        Page beforePage = readPageData(raf);
-                        
-                        if (!revertedPages.contains(beforePage) &&
-                                recordTid == tid.getId()) {
-                            // write the before-image page
-                            Database.getCatalog().getDatabaseFile(
-                                    beforePage.getId().getTableId()).writePage(beforePage);
-                            // remove the page from the BufferPool
-                            Database.getBufferPool().discardPage(beforePage.getId());
-                            
-                            revertedPages.add(beforePage);
-                        }
-                        // read after-image page to move pointer
+                    switch (recordType) {
+                    case UPDATE_RECORD:
+                        Page before = readPageData(raf);
                         readPageData(raf);
-                    } else if (recordType == CHECKPOINT_RECORD) {
-                        int transactions = raf.readInt();
-                        long jump = 2 * transactions * LONG_SIZE;
+                        
+                        if (recordId == tid) {
+                            Database.getCatalog().getDatabaseFile(
+                                    before.getId().getTableId()).writePage(before);
+                            Database.getBufferPool().discardPage(before.getId());
+                        }
+                        
+                        break;
+                    case CHECKPOINT_RECORD:
+                        // number of transactions
+                        int numTrans = raf.readInt();
+                        long jump = 2 * numTrans * LONG_SIZE;
                         
                         raf.seek(raf.getFilePointer() + jump);
+                        
+                        break;
                     }
-                    // read the past record
+                    // read the past
                     raf.readLong();
                 }
             }
@@ -532,7 +542,79 @@ public class LogFile {
         synchronized (Database.getBufferPool()) {
             synchronized (this) {
                 recoveryUndecided = false;
-                // some code goes here
+                // to store loser transactions
+                HashMap<Long, Long> loserTrans = new HashMap<>();
+                raf.seek(0);
+                
+                // read the last checkpoint if any
+                long ckpt = raf.readLong();
+                
+                if (ckpt != NO_CHECKPOINT_ID) {
+                    raf.seek(ckpt);
+                    raf.readInt();
+                    raf.readLong();
+                    // number of transactions
+                    int numTrans = raf.readInt();
+                    
+                    for (int i = 0; i < numTrans; i++) {
+                        loserTrans.put(raf.readLong(), raf.readLong());
+                    }
+                    
+                    raf.readLong();
+                }
+                
+                // redo
+                while (raf.getFilePointer() < raf.length()) {
+                    int recordType = raf.readInt();
+                    long recordId = raf.readLong();
+                    
+                    switch (recordType) {
+                    case ABORT_RECORD:
+                        raf.readLong();
+                        long offset = raf.getFilePointer();
+                        rollbackHelper(recordId, loserTrans.get(recordId));
+                        raf.seek(offset);
+                        
+                        loserTrans.remove(recordId);
+                        
+                        break;
+                    case COMMIT_RECORD:
+                        loserTrans.remove(recordId);
+                        raf.readLong();
+                        
+                        break;
+                    case UPDATE_RECORD:
+                        Page before = readPageData(raf);
+                        Page after = readPageData(raf);
+                        
+                        Database.getCatalog().getDatabaseFile(before.getId().getTableId()).writePage(after);
+                        Database.getBufferPool().discardPage(before.getId());
+                        raf.readLong();
+                        
+                        break;
+                    case BEGIN_RECORD:
+                        loserTrans.put(recordId, raf.readLong());
+                        
+                        break;
+                    case CHECKPOINT_RECORD:
+                        // number of transactions
+                        int numTrans = raf.readInt();
+                        long jump = 2 * numTrans * LONG_SIZE;
+                        
+                        raf.seek(raf.getFilePointer() + jump);
+                        raf.readLong();
+                        
+                        break;
+                    }
+                }
+                
+                // undo
+                Iterator<Long> iter = loserTrans.keySet().iterator();
+                
+                while (iter.hasNext()) {
+                    long tid = iter.next();
+                    rollbackHelper(tid, loserTrans.get(tid));
+                }
             }
          }
     }
