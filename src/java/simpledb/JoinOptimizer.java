@@ -111,7 +111,7 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return -1.0;
+            return cost1 + (card1 * (cost2 + card2));
         }
     }
 
@@ -156,7 +156,23 @@ public class JoinOptimizer {
             boolean t2pkey, Map<String, TableStats> stats,
             Map<String, Integer> tableAliasToId) {
         int card = 1;
-        // some code goes here
+        
+        if (joinOp == Predicate.Op.EQUALS) {
+            if (t1pkey) {
+                card = card2;
+            } else if (t2pkey) {
+                card = card1;
+            } else {
+                if (card1 < card2) {
+                    card = card2;
+                } else {
+                    card = card1;
+                }
+            }
+        } else {
+            card = card1 * card2 * 3 / 10;
+        }
+        
         return card <= 0 ? 1 : card;
     }
 
@@ -220,8 +236,31 @@ public class JoinOptimizer {
         //Not necessary for labs 1--3
 
         // some code goes here
-        //Replace the following
-        return joins;
+        // follow the algorithm in class
+        PlanCache pc = new PlanCache();
+        Vector<LogicalJoinNode> optJoin = null;
+        
+        for (int i = 1; i <= joins.size(); i++) {
+            for (Set<LogicalJoinNode> nodeSet : enumerateSubsets(joins, i)) {
+                pc.addPlan(nodeSet, Double.MAX_VALUE, Integer.MAX_VALUE, null);
+                
+                for (LogicalJoinNode node : nodeSet) {
+                    Double cost = pc.getCost(nodeSet);
+                    Set<LogicalJoinNode> set = new HashSet<>(nodeSet);
+                    set.remove(node);
+                    
+                    CostCard plan = computeCostAndCardOfSubplan(
+                            stats, filterSelectivities, node, nodeSet, cost, pc);
+                    
+                    if (plan != null && plan.cost < cost) {
+                        pc.addPlan(nodeSet, plan.cost, plan.card, plan.plan);
+                        optJoin = plan.plan;
+                    }
+                }
+            }
+        }
+        
+        return optJoin;
     }
 
     // ===================== Private Methods =================================
