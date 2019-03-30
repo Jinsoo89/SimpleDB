@@ -1,8 +1,6 @@
 package simpledb;
 
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -12,11 +10,17 @@ import java.util.concurrent.ConcurrentHashMap;
  * This class is not needed in implementing lab1 and lab2.
  */
 public class TableStats {
-
+    // fields
     private static final ConcurrentHashMap<String, TableStats> statsMap = new ConcurrentHashMap<String, TableStats>();
 
     static final int IOCOSTPERPAGE = 1000;
-
+    
+    private int tableid;
+    private int ioCostPerPage;
+    private int numTuples;
+    private TupleDesc td;
+    private Object[] histograms;
+    
     public static TableStats getTableStats(String tablename) {
         return statsMap.get(tablename);
     }
@@ -85,6 +89,112 @@ public class TableStats {
         // necessarily have to (for example) do everything
         // in a single scan of the table.
         // some code goes here
+        this.tableid = tableid;
+        this.ioCostPerPage = ioCostPerPage;
+        this.numTuples = 0;
+        this.td = Database.getCatalog().getTupleDesc(tableid);
+        TransactionId tid = new TransactionId();
+        DbFile file = Database.getCatalog().getDatabaseFile(tableid);
+        DbFileIterator it = file.iterator(tid);
+        
+        int size = td.numFields();
+        this.histograms = new Object[size];
+        int[] maxs = new int[size];
+        int[] mins = new int[size];
+
+        for (int i = 0; i < size; i++) {
+            maxs[i] = Integer.MIN_VALUE;
+            mins[i] = Integer.MAX_VALUE;
+        }
+        
+        Tuple current = null;
+        
+        try {
+            it.open();
+
+            while (it.hasNext()) {
+                current = it.next();
+
+                for (int i = 0; i < size; i++) {
+                    Field field = current.getField(i);
+                    Type fieldType = td.getFieldType(i);
+
+                    if (fieldType == Type.INT_TYPE) {
+                        int value = ((IntField) field).getValue();
+                        
+                        if (value > maxs[i]) {
+                            maxs[i] = value;
+                            
+                        } else if (value < mins[i]) {
+                            mins[i] = value;
+                        }
+                    }
+                }
+                numTuples++;
+            }
+            
+            it.close();
+
+        } catch (DbException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        } catch (TransactionAbortedException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+        
+        for (int i = 0; i < size; i++) {
+            Type fieldType = td.getFieldType(i);
+            
+            if (fieldType == Type.INT_TYPE) {
+                histograms[i] = new IntHistogram(NUM_HIST_BINS, mins[i], maxs[i]);
+            } else {
+                histograms[i] = new StringHistogram(NUM_HIST_BINS);
+            }
+        }
+        
+        HashMap<String, HashSet<Field>> fields = new HashMap<String, HashSet<Field>>();
+        
+        for (int i = 0; i < size; i++) {
+            fields.put(td.getFieldName(i), new HashSet<>());
+        }
+        
+        try {
+            it.open();
+            
+            while (it.hasNext()) {
+                current = it.next();
+                
+                for (int i = 0; i < td.numFields(); i++) {
+                    HashSet<Field> fieldSet = fields.get(td.getFieldName(i));
+                    Field field = current.getField(i);
+                    fieldSet.add(field);
+                    
+                    Type fieldType = td.getFieldType(i);
+                    
+                    if (fieldType == Type.INT_TYPE) {
+                        int intValue = ((IntField) current.getField(i)).getValue();
+                        IntHistogram intHistogram = (IntHistogram) histograms[i];
+                        
+                        intHistogram.addValue(intValue);
+                    } else {
+                        String strValue = ((StringField) current.getField(i)).getValue();
+                        StringHistogram hist = (StringHistogram) histograms[i];
+                        
+                        hist.addValue(strValue);
+                    }
+                }
+            }
+            
+            it.close();
+            
+        } catch (DbException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        } catch (TransactionAbortedException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -101,7 +211,9 @@ public class TableStats {
      */
     public double estimateScanCost() {
         // some code goes here
-        return 0;
+        DbFile file = Database.getCatalog().getDatabaseFile(tableid);
+        
+        return ((HeapFile) file).numPages() * ioCostPerPage;
     }
 
     /**
@@ -115,7 +227,7 @@ public class TableStats {
      */
     public int estimateTableCardinality(double selectivityFactor) {
         // some code goes here
-        return 0;
+        return (int) (numTuples * selectivityFactor);
     }
 
     /**
@@ -148,7 +260,15 @@ public class TableStats {
      */
     public double estimateSelectivity(int field, Predicate.Op op, Field constant) {
         // some code goes here
-        return 1.0;
+        Object histogram = histograms[field];
+        
+        if (histogram instanceof IntHistogram) {
+            return ((IntHistogram) histogram).estimateSelectivity(
+                    op, ((IntField) constant).getValue());
+        } else {
+            return ((StringHistogram) histogram).estimateSelectivity(
+                    op, ((StringField) constant).getValue());
+        }
     }
 
     /**
@@ -156,7 +276,6 @@ public class TableStats {
      * */
     public int totalTuples() {
         // some code goes here
-        return 0;
+        return numTuples;
     }
-
 }
